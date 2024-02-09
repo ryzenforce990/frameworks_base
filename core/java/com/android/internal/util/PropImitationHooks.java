@@ -1,5 +1,7 @@
 /*
  * Copyright (C) 2022 Paranoid Android
+ * Copyright (C) 2022 StatiXOS
+ * Copyright (C) 2024 the RisingOS Android Project
  *           (C) 2023 ArrowOS
  *           (C) 2023 The LibreMobileOS Foundation
  *
@@ -18,273 +20,324 @@
 
 package com.android.internal.util;
 
-import android.app.ActivityTaskManager;
+import android.app.ActivityManager;
 import android.app.Application;
 import android.app.TaskStackListener;
-import android.content.ComponentName;
 import android.content.Context;
+import android.content.ComponentName;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.os.Build;
 import android.os.Binder;
 import android.os.Process;
+import android.os.Build.VERSION;
 import android.os.SystemProperties;
-import android.text.TextUtils;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.WindowManager;
 
 import com.android.internal.R;
 
 import java.lang.reflect.Field;
 import java.util.Arrays;
+import java.util.List;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
 public class PropImitationHooks {
 
     private static final String TAG = "PropImitationHooks";
-    private static final boolean DEBUG = SystemProperties.getBoolean("debug.pihooks.log", false);
+    private static final boolean DEBUG = SystemProperties.getBoolean("persist.sys.pihooks.debug", false);
+    
+    private static final String PRODUCT_DEVICE = "ro.product.device";
 
-    private static final String PACKAGE_AIWALLPAPERS = "com.google.android.apps.aiwallpapers";
+    private static final String sMainFP = "google/husky/husky:14/UQ1A.240205.004.B1/11318806:user/release-keys";
+    private static final String sMainModel = "Pixel 8 Pro";
+    private static final String sMainFpTablet = "google/tangorpro/tangorpro:14/UQ1A.240105.002/11129216:user/release-keys";
+    private static final String sMainModelTablet = "Pixel Tablet";
+    private static final String sStockFp = SystemProperties.get("ro.vendor.build.fingerprint");
+
     private static final String PACKAGE_ARCORE = "com.google.ar.core";
-    private static final String PACKAGE_ASSISTANT = "com.google.android.apps.googleassistant";
     private static final String PACKAGE_ASI = "com.google.android.as";
-    private static final String PACKAGE_EMOJIWALLPAPER = "com.google.android.apps.emojiwallpaper";
-
+    private static final String PACKAGE_COMPUTE_SERVICES = "com.google.android.as.oss";
+    private static final String PACKAGE_EXT_SERVICES = "com.google.android.ext.services";
     private static final String PACKAGE_FINSKY = "com.android.vending";
-    private static final String PACKAGE_GBOARD = "com.google.android.inputmethod.latin";
     private static final String PACKAGE_GMS = "com.google.android.gms";
-    private static final String PACKAGE_LIVEWALLPAPER = "com.google.pixel.livewallpaper";
-
-    private static final String PACKAGE_PIXELTHEMES = "com.google.android.apps.customization.pixel";
-    private static final String PACKAGE_PIXELWALLPAPER = "com.google.android.apps.wallpaper.pixel";
-    private static final String PACKAGE_TURBO = "com.google.android.apps.turbo";
-
-    private static final String PACKAGE_SUBSCRIPTION_RED = "com.google.android.apps.subscriptions.red";
-    private static final String PACKAGE_WALLPAPER = "com.google.android.apps.wallpaper";
-    private static final String PACKAGE_WALLPAPEREFFECTS = "com.google.android.wallpaper.effects";
-
-    private static final String PACKAGE_GPHOTOS = "com.google.android.apps.photos";
-    private static final String PACKAGE_NETFLIX = "com.netflix.mediaclient";
-    private static final String PACKAGE_VELVET = "com.google.android.googlequicksearchbox";
-
     private static final String PROCESS_GMS_PERSISTENT = PACKAGE_GMS + ".persistent";
+    private static final String PROCESS_GMS_UI = PACKAGE_GMS + ".ui";
     private static final String PROCESS_GMS_UNSTABLE = PACKAGE_GMS + ".unstable";
 
-    private static final String PROP_SECURITY_PATCH = "persist.sys.pihooks.security_patch";
-    private static final String PROP_FIRST_API_LEVEL = "persist.sys.pihooks.first_api_level";
+    private static final String PACKAGE_AIAI = "com.google.android.apps.miphone.aiai.AiaiApplication";
+    private static final String PACKAGE_GASSIST = "com.google.android.apps.googleassistant";
+    private static final String PACKAGE_GCAM = "com.google.android.GoogleCamera";
+    private static final String PACKAGE_GPHOTOS = "com.google.android.apps.photos";
+    private static final String PACKAGE_SUBSCRIPTION_RED = "com.google.android.apps.subscriptions.red";
+    private static final String PACKAGE_TURBO = "com.google.android.apps.turbo";
+    private static final String PACKAGE_VELVET = "com.google.android.googlequicksearchbox";
+    private static final String PACKAGE_GBOARD = "com.google.android.inputmethod.latin";
+    private static final String PACKAGE_SETIINGS_INTELLIGENCE = "com.google.android.settings.intelligence";
+    private static final String PACKAGE_SETUPWIZARD = "com.google.android.setupwizard";
+    private static final String PACKAGE_EMOJI_WALLPAPER = "com.google.android.apps.emojiwallpaper";
+    private static final String PACKAGE_CINEMATIC_PHOTOS = "com.google.android.wallpaper.effects";
+    private static final String PACKAGE_GOOGLE_WALLPAPERS = "com.google.android.wallpaper";
+    private static final String PACKAGE_SNAPCHAT = "com.snapchat.android";
 
     private static final ComponentName GMS_ADD_ACCOUNT_ACTIVITY = ComponentName.unflattenFromString(
             "com.google.android.gms/.auth.uiflows.minutemaid.MinuteMaidActivity");
 
-    private static final String FEATURE_NEXUS_PRELOAD =
-            "com.google.android.apps.photos.NEXUS_PRELOAD";
+    private static Map<String, Object> sMainSpoofProps;
+    private static final Map<String, Object> gPhotosProps = createGoogleSpoofProps("Pixel XL", "google/marlin/marlin:10/QP1A.191005.007.A3/5972272:user/release-keys");
+    private static final Map<String, Object> asusROG1Props = createGameProps("ASUS_Z01QD", "Asus");
+    private static final Map<String, Object> asusROG3Props = createGameProps("ASUS_I003D", "Asus");
+    private static final Map<String, Object> xperia5Props = createGameProps("SO-52A", "Sony");
+    private static final Map<String, Object> op8ProProps = createGameProps("IN2020", "OnePlus");
+    private static final Map<String, Object> op9RProps = createGameProps("LE2101", "OnePlus");
+    private static final Map<String, Object> xmMi11TProps = createGameProps("21081111RG", "Xiaomi");
+    private static final Map<String, Object> xmF4Props = createGameProps("22021211RG", "Xiaomi");
 
-    private static final Map<String, String> sPixelEightProps = Map.of(
-        "PRODUCT", "husky",
-        "DEVICE", "husky",
-        "MANUFACTURER", "Google",
-        "BRAND", "google",
-        "MODEL", "Pixel 8 Pro",
-        "FINGERPRINT", "google/husky/husky:14/UQ1A.240205.004/11269751:user/release-keys"
-    );
+    private static Map<String, Object> createGameProps(String model, String manufacturer) {
+        Map<String, Object> props = new HashMap<>();
+        props.put("MODEL", model);
+        props.put("MANUFACTURER", manufacturer);
+        return props;
+    }
 
-    private static final Map<String, String> sPixelOneProps = Map.of(
-        "PRODUCT", "sailfish",
-        "DEVICE", "sailfish",
-        "MANUFACTURER", "Google",
-        "BRAND", "google",
-        "MODEL", "Pixel",
-        "FINGERPRINT", "google/sailfish/sailfish:10/QP1A.191005.007.A3/5972272:user/release-keys"
-    );
+    private static Map<String, Object> createGoogleSpoofProps(String model, String fingerprint) {
+        Map<String, Object> props = new HashMap<>();
+        props.put("BRAND", "google");
+        props.put("MANUFACTURER", "Google");
+        props.put("ID", getBuildID(fingerprint));
+        props.put("DEVICE", getDeviceName(fingerprint));
+        props.put("PRODUCT", getDeviceName(fingerprint));
+        props.put("MODEL", model);
+        props.put("FINGERPRINT", fingerprint);
+        props.put("TYPE", "user");
+        props.put("TAGS", "release-keys");
+        return props;
+    }
 
-    private static final Map<String, String> sPixelTabletProps = Map.of(
-        "PRODUCT", "tangorpro",
-        "DEVICE", "tangorpro",
-        "MANUFACTURER", "Google",
-        "BRAND", "google",
-        "MODEL", "Pixel Tablet",
-        "FINGERPRINT", "google/tangorpro/tangorpro:14/UQ1A.240105.002/11129216:user/release-keys"
-    );
+    private static String getBuildID(String fingerprint) {
+        Pattern pattern = Pattern.compile("([A-Za-z0-9]+\\.\\d+\\.\\d+\\.\\w+)");
+        Matcher matcher = pattern.matcher(fingerprint);
 
-    private static final Set<String> sPixelFeatures = Set.of(
-        "PIXEL_2017_PRELOAD",
-        "PIXEL_2018_PRELOAD",
-        "PIXEL_2019_MIDYEAR_PRELOAD",
-        "PIXEL_2019_PRELOAD",
-        "PIXEL_2020_EXPERIENCE",
-        "PIXEL_2020_MIDYEAR_EXPERIENCE"
-    );
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return "";
+    }
 
-    private static volatile String[] sCertifiedProps;
-    private static volatile String sStockFp, sNetflixModel;
-    private static volatile boolean sSpoofGapps;
+    private static String getDeviceName(String fingerprint) {
+        String[] parts = fingerprint.split("/");
+        if (parts.length >= 2) {
+            return parts[1];
+        } else {
+            return "";
+        }
+    }
 
+    private static final Set<String> packagesToChangeROG1 = new HashSet<>(Arrays.asList(
+            "com.madfingergames.legends"
+    ));
+
+    private static final Set<String> packagesToChangeROG3 = new HashSet<>(Arrays.asList(
+            "com.pearlabyss.blackdesertm",
+            "com.pearlabyss.blackdesertm.gl"
+    ));
+
+    private static final Set<String> packagesToChangeXP5 = new HashSet<>(Arrays.asList(
+            "com.activision.callofduty.shooter",
+            "com.garena.game.codm",
+            "com.tencent.tmgp.kr.codm",
+            "com.vng.codmvn"
+    ));
+
+    private static final Set<String> packagesToChangeOP8P = new HashSet<>(Arrays.asList(
+            "com.netease.lztgglobal",
+            "com.pubg.imobile",
+            "com.pubg.krmobile",
+            "com.rekoo.pubgm",
+            "com.riotgames.league.wildrift",
+            "com.riotgames.league.wildrifttw",
+            "com.riotgames.league.wildriftvn",
+            "com.tencent.ig",
+            "com.tencent.tmgp.pubgmhd",
+            "com.vng.pubgmobile"
+    ));
+
+    private static final Set<String> packagesToChangeOP9R = new HashSet<>(Arrays.asList(
+            "com.epicgames.fortnite",
+            "com.epicgames.portal"
+    ));
+
+    private static final Set<String> packagesToChange11T = new HashSet<>(Arrays.asList(
+            "com.ea.gp.apexlegendsmobilefps",
+            "com.levelinfinite.hotta.gp",
+            "com.mobile.legends",
+            "com.supercell.clashofclans",
+            "com.tencent.tmgp.sgame",
+            "com.vng.mlbbvn"
+    ));
+
+    private static final Set<String> packagesToChangeF4 = new HashSet<>(Arrays.asList(
+            "com.dts.freefiremax",
+            "com.dts.freefireth"
+    ));
+
+    private static final Set<String> EXCLUDED_PACKAGES = new HashSet<>(Arrays.asList(
+            PACKAGE_ARCORE,
+            PACKAGE_GCAM,
+            PACKAGE_GPHOTOS,
+            PACKAGE_SETUPWIZARD
+    ));
+
+    private static volatile boolean sIsGms, sIsGmsUi, sIsGmsPersist, sIsFinsky, sisGoogleApp, sIsGoogleProcess, sIsExcluded;
     private static volatile String sProcessName;
-    private static volatile boolean sIsGms, sIsFinsky, sIsPhotos, sIsTablet;
 
-    public static void setProps(Context context) {
-        final String packageName = context.getPackageName();
-        final String processName = Application.getProcessName();
-
-        if (TextUtils.isEmpty(packageName) || TextUtils.isEmpty(processName)) {
-            Log.e(TAG, "Null package or process name");
-            return;
+    public static void setProps(Context appContext) {
+        if (appContext == null) return;
+        final String packageName = appContext.getPackageName();
+        if (packageName == null) return;
+        ActivityManager manager = (ActivityManager) appContext.getSystemService(Context.ACTIVITY_SERVICE);
+        if (manager == null) return;
+        List<ActivityManager.RunningAppProcessInfo> runningProcesses = null;
+        try {
+            runningProcesses = manager.getRunningAppProcesses();
+        } catch (Exception e) {
+            runningProcesses = null;
         }
-
-        final Resources res = context.getResources();
-        if (res == null) {
-            Log.e(TAG, "Null resources");
-            return;
+        if (runningProcesses == null) return;
+        String processName = null;
+        for (ActivityManager.RunningAppProcessInfo processInfo : runningProcesses) {
+            if (processInfo.pid == android.os.Process.myPid()) {
+                processName = processInfo.processName;
+                break;
+            }
         }
-
-        sCertifiedProps = res.getStringArray(R.array.config_certifiedBuildProperties);
-        sStockFp = res.getString(R.string.config_stockFingerprint);
-        sNetflixModel = res.getString(R.string.config_netflixSpoofModel);
-        sSpoofGapps = res.getBoolean(R.bool.config_spoofGoogleApps);
-        sIsTablet = res.getBoolean(R.bool.config_spoofasTablet);
-
+        if (processName == null) return;
+        final boolean sIsTablet = isDeviceTablet(appContext);
+        final String sMainModelSpoof = sIsTablet ? sMainModelTablet : sMainModel;
+        final String sMainFpSpoof = sIsTablet ? sMainFpTablet : sMainFP;
+        sMainSpoofProps = createGoogleSpoofProps(sMainModelSpoof, sMainFpSpoof);
         sProcessName = processName;
         sIsGms = packageName.equals(PACKAGE_GMS) && processName.equals(PROCESS_GMS_UNSTABLE);
+        sIsGmsUi = packageName.equals(PACKAGE_GMS) && processName.equals(PROCESS_GMS_UI);
+        sIsGmsPersist = packageName.equals(PACKAGE_GMS) && processName.equals(PROCESS_GMS_PERSISTENT);
         sIsFinsky = packageName.equals(PACKAGE_FINSKY);
-        sIsPhotos = sSpoofGapps && packageName.equals(PACKAGE_GPHOTOS);
-
-        /* Set certified properties for GMSCore
-         * Set stock fingerprint for ARCore
-         * Set Pixel 8 Pro for Google, ASI and GMS device configurator
-         * Set Pixel XL for Google Photos
-         * Set custom model for Netflix
-         */
-        if (sIsGms) {
-            setCertifiedPropsForGms();
-        } else if (!sStockFp.isEmpty() && packageName.equals(PACKAGE_ARCORE)) {
-            dlog("Setting stock fingerprint for: " + packageName);
-            setPropValue("FINGERPRINT", sStockFp);
-        } else if (sSpoofGapps && (packageName.equals(PACKAGE_VELVET)
-		|| packageName.equals(PACKAGE_SUBSCRIPTION_RED)
-		|| packageName.equals(PACKAGE_TURBO)
-                || packageName.equals(PACKAGE_ASI)
-		|| packageName.equals(PACKAGE_GBOARD)
-                || packageName.equals(PACKAGE_AIWALLPAPERS)
-		|| packageName.equals(PACKAGE_ASSISTANT)
-		|| packageName.equals(PACKAGE_EMOJIWALLPAPER)
-		|| packageName.equals(PACKAGE_LIVEWALLPAPER)
-                || packageName.equals(PACKAGE_PIXELTHEMES)
-		|| packageName.equals(PACKAGE_PIXELWALLPAPER)
-		|| packageName.equals(PACKAGE_WALLPAPER)
-		|| packageName.equals(PACKAGE_WALLPAPEREFFECTS)
-                || (packageName.equals(PACKAGE_GMS)
-		&& processName.equals(PROCESS_GMS_PERSISTENT)))) {
-            if (sIsTablet) {
-                dlog("Spoofing Pixel Tablet for: " + packageName + " process: " + processName);
-                sPixelTabletProps.forEach(PropImitationHooks::setPropValue);
-            } else {
-                dlog("Spoofing Pixel 8 Pro for: " + packageName + " process: " + processName);
-                sPixelEightProps.forEach(PropImitationHooks::setPropValue);
-            }
-        } else if (sIsPhotos) {
-            dlog("Spoofing Pixel 1 for Google Photos");
-            sPixelOneProps.forEach((PropImitationHooks::setPropValue));
-        } else if (!sNetflixModel.isEmpty() && packageName.equals(PACKAGE_NETFLIX)) {
-            dlog("Setting model to " + sNetflixModel + " for Netflix");
-            setPropValue("MODEL", sNetflixModel);
-        }
-    }
-
-    private static void setPropValue(String key, String value) {
-        try {
-            dlog("Setting prop " + key + " to " + value.toString());
-            Class clazz = Build.class;
-            if (key.startsWith("VERSION.")) {
-                clazz = Build.VERSION.class;
-                key = key.substring(8);
-            }
-            Field field = clazz.getDeclaredField(key);
-            field.setAccessible(true);
-            // Cast the value to int if it's an integer field, otherwise string.
-            field.set(null, field.getType().equals(Integer.TYPE) ? Integer.parseInt(value) : value);
-            field.setAccessible(false);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to set prop " + key, e);
-        }
-    }
-
-    private static void setCertifiedPropsForGms() {
-        if (sCertifiedProps.length == 0) {
-            dlog("Certified props are not set");
-            return;
-        }
-        final boolean was = isGmsAddAccountActivityOnTop();
-        final TaskStackListener taskStackListener = new TaskStackListener() {
-            @Override
-            public void onTaskStackChanged() {
-                final boolean is = isGmsAddAccountActivityOnTop();
-                if (is ^ was) {
-                    dlog("GmsAddAccountActivityOnTop is:" + is + " was:" + was +
-                            ", killing myself!"); // process will restart automatically later
-                    Process.killProcess(Process.myPid());
-                }
-            }
-        };
-        if (!was) {
-            dlog("Spoofing build for GMS");
-            setCertifiedProps();
+        sisGoogleApp = packageName.toLowerCase().contains("google");
+        sIsGoogleProcess = processName.toLowerCase().contains("google");
+        sIsExcluded = EXCLUDED_PACKAGES.contains(packageName);
+        if ((sisGoogleApp || sIsGoogleProcess)
+            && !sIsExcluded
+            && (!sIsGms || !sIsGmsPersist || !sIsGmsUi)) {
+            dlog("Spoofing build for Google Services");
+            setPropValue("TIME", System.currentTimeMillis());
+            sMainSpoofProps.forEach((k, v) -> setPropValue(k, v));
         } else {
-            dlog("Skip spoofing build for GMS, because GmsAddAccountActivityOnTop");
-        }
-        try {
-            ActivityTaskManager.getService().registerTaskStackListener(taskStackListener);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to register task stack listener!", e);
-        }
-    }
-
-    private static void setCertifiedProps() {
-        for (String entry : sCertifiedProps) {
-            // Each entry must be of the format FIELD:value
-            final String[] fieldAndProp = entry.split(":", 2);
-            if (fieldAndProp.length != 2) {
-                Log.e(TAG, "Invalid entry in certified props: " + entry);
-                continue;
+            switch (packageName) {
+                case PACKAGE_ARCORE:
+                    dlog("Setting stock fingerprint for: " + packageName);
+                    setPropValue("FINGERPRINT", sStockFp);
+                    break;
+                case PACKAGE_GPHOTOS:
+                    gPhotosProps.forEach((k, v) -> setPropValue(k, v));
+                    break;
+                default:
+                    spoofGameProps(packageName);
+                    break;
             }
-            setPropValue(fieldAndProp[0], fieldAndProp[1]);
-        }
-        setSystemProperty(PROP_SECURITY_PATCH, Build.VERSION.SECURITY_PATCH);
-        setSystemProperty(PROP_FIRST_API_LEVEL,
-                Integer.toString(Build.VERSION.DEVICE_INITIAL_SDK_INT));
-    }
-
-    private static void setSystemProperty(String name, String value) {
-        try {
-            SystemProperties.set(name, value);
-            dlog("Set system prop " + name + "=" + value);
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to set system prop " + name + "=" + value, e);
         }
     }
 
-    private static boolean isGmsAddAccountActivityOnTop() {
-        try {
-            final ActivityTaskManager.RootTaskInfo focusedTask =
-                    ActivityTaskManager.getService().getFocusedRootTaskInfo();
-            return focusedTask != null && focusedTask.topActivity != null
-                    && focusedTask.topActivity.equals(GMS_ADD_ACCOUNT_ACTIVITY);
-        } catch (Exception e) {
-            Log.e(TAG, "Unable to get top activity!", e);
+    private static void spoofGameProps(String packageName) {
+        if (SystemProperties.getBoolean("persist.sys.pixelprops.games", true)) {
+            Map<String, Object> gamePropsToSpoof = null;
+            if (packagesToChangeROG1.contains(packageName)) {
+                dlog("Spoofing as Asus ROG 1 for: " + packageName);
+                gamePropsToSpoof = asusROG1Props;
+            } else if (packagesToChangeROG3.contains(packageName)) {
+                dlog("Spoofing as Asus ROG 3 for: " + packageName);
+                gamePropsToSpoof = asusROG3Props;
+            } else if (packagesToChangeXP5.contains(packageName)) {
+                dlog("Spoofing as Sony Xperia 5 for: " + packageName);
+                gamePropsToSpoof = xperia5Props;
+            } else if (packagesToChangeOP8P.contains(packageName)) {
+                dlog("Spoofing as Oneplus 8 Pro for: " + packageName);
+                gamePropsToSpoof = op8ProProps;
+            } else if (packagesToChangeOP9R.contains(packageName)) {
+                dlog("Spoofing as Oneplus 9R for: " + packageName);
+                gamePropsToSpoof = op9RProps;
+            } else if (packagesToChange11T.contains(packageName)) {
+                dlog("Spoofing as Xiaomi Mi 11T for: " + packageName);
+                gamePropsToSpoof = xmMi11TProps;
+            } else if (packagesToChangeF4.contains(packageName)) {
+                dlog("Spoofing as Xiaomi F4 for: " + packageName);
+                gamePropsToSpoof = xmF4Props;
+            }
+            if (gamePropsToSpoof != null) {
+                gamePropsToSpoof.forEach((k, v) -> setPropValue(k, v));
+            }
         }
-        return false;
     }
 
-    public static boolean shouldBypassTaskPermission(Context context) {
-        // GMS doesn't have MANAGE_ACTIVITY_TASKS permission
-        final int callingUid = Binder.getCallingUid();
-        final int gmsUid;
-        try {
-            gmsUid = context.getPackageManager().getApplicationInfo(PACKAGE_GMS, 0).uid;
-            dlog("shouldBypassTaskPermission: gmsUid:" + gmsUid + " callingUid:" + callingUid);
-        } catch (Exception e) {
-            Log.e(TAG, "shouldBypassTaskPermission: unable to get gms uid", e);
+    private static boolean isDeviceTablet(Context context) {
+        if (context == null) {
             return false;
         }
-        return gmsUid == callingUid;
+        Configuration configuration = context.getResources().getConfiguration();
+        DisplayMetrics displayMetrics = new DisplayMetrics();
+        WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        if (windowManager != null) {
+            windowManager.getDefaultDisplay().getMetrics(displayMetrics);
+        }
+        return (configuration.screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK)
+                >= Configuration.SCREENLAYOUT_SIZE_LARGE
+                || displayMetrics.densityDpi == DisplayMetrics.DENSITY_XHIGH
+                || displayMetrics.densityDpi == DisplayMetrics.DENSITY_XXHIGH
+                || displayMetrics.densityDpi == DisplayMetrics.DENSITY_XXXHIGH;
+    }
+
+    private static void setPropValue(String key, Object value) {
+        try {
+            if (value == null || (value instanceof String && ((String) value).isEmpty())) {
+                dlog(TAG + " Skipping setting empty value for key: " + key);
+                return;
+            }
+            dlog(TAG + " Setting property for key: " + key + ", value: " + value.toString());
+            Field field;
+            Class<?> targetClass;
+            try {
+                targetClass = Build.class;
+                field = targetClass.getDeclaredField(key);
+            } catch (NoSuchFieldException e) {
+                targetClass = Build.VERSION.class;
+                field = targetClass.getDeclaredField(key);
+            }
+            if (field != null) {
+                field.setAccessible(true);
+                Class<?> fieldType = field.getType();
+                if (fieldType == int.class || fieldType == Integer.class) {
+                    if (value instanceof Integer) {
+                        field.set(null, value);
+                    } else if (value instanceof String) {
+                        int convertedValue = Integer.parseInt((String) value);
+                        field.set(null, convertedValue);
+                        dlog(TAG + " Converted value for key " + key + ": " + convertedValue);
+                    }
+                } else if (fieldType == String.class) {
+                    field.set(null, String.valueOf(value));
+                }
+                field.setAccessible(false);
+            }
+        } catch (IllegalAccessException | NoSuchFieldException e) {
+            dlog(TAG + " Failed to set prop " + key);
+        } catch (NumberFormatException e) {
+            dlog(TAG + " Failed to parse value for field " + key);
+        }
     }
 
     private static boolean isCallerSafetyNet() {
@@ -293,24 +346,10 @@ public class PropImitationHooks {
     }
 
     public static void onEngineGetCertificateChain() {
-        // Check stack for SafetyNet or Play Integrity
-        if (isCallerSafetyNet() || sIsFinsky) {
+        if ((isCallerSafetyNet() || sIsFinsky) && !sIsExcluded) {
             dlog("Blocked key attestation sIsGms=" + sIsGms + " sIsFinsky=" + sIsFinsky);
             throw new UnsupportedOperationException();
         }
-    }
-
-    public static boolean hasSystemFeature(String name, boolean has) {
-        if (sIsPhotos) {
-            if (has && sPixelFeatures.stream().anyMatch(name::contains)) {
-                dlog("Blocked system feature " + name + " for Google Photos");
-                has = false;
-            } else if (!has && name.equalsIgnoreCase(FEATURE_NEXUS_PRELOAD)) {
-                dlog("Enabled system feature " + name + " for Google Photos");
-                has = true;
-            }
-        }
-        return has;
     }
 
     public static void dlog(String msg) {
